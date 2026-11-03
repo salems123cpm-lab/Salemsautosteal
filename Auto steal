@@ -1,12 +1,39 @@
 -- ==========================================
--- SALEMS AUTO STEAL CON INTRO ÉPICA (GLAZIER)
+-- SALEMS HUB - AUTO STEAL + AIMBOT GLAZIER
 -- ==========================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local ContentProvider = game:GetService("ContentProvider")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- VARIABLES
+-- ==========================================
+local CONFIG = { AUTO_STEAL_ENABLED = true, RADIUS = 65, HOLD_MIN = 1.3, HOLD_MAX = 2.6, NEAR_TARGET_RANGE = 20, FIRE_RANGE = 12, ENTRY_DELAY = 0.3 }
+local v1Progress = 0
+local V3New = { busy = false, data = {}, generation = 0 }
+
+-- Variables Aimbot
+local AimbotEnabled = false
+local AimbotSpeed = 55
+local zurichConn = nil
+local Z = {
+    targetPlayer = nil, lastTargetPos = nil, targetVelocity = Vector3.zero, smoothedVelocity = Vector3.zero,
+    velocityHistory = {}, accelerationHistory = {}, aerialVelocityHistory = {}, verticalVelocityHistory = {},
+    previousDirection = nil, lastDirectionChangeTime = 0, airborneTime = 0, lastActivationTime = 0,
+    currentPing = 0.1, realPingMs = 0,
+}
+local ZCFG = {
+    FOLLOW_SPEED = 55, ACTIVATE_DISTANCE = 13, MIN_FOLLOW_DISTANCE = 1, PREDICTION_TIME = 0.22,
+    PREDICT_AHEAD = 3, MAX_VELOCITY_CHANGE = 150, VELOCITY_SMOOTHING = 0.2, MAX_HORIZONTAL_VELOCITY = 80,
+    SERVER_TICKRATE = 1/60, MIN_PING_COMPENSATION = 0.03, MAX_PING_COMPENSATION = 0.25,
+    ACCELERATION_PREDICTION_WEIGHT = 0.3, DIRECTION_CHANGE_DETECTION_TIME = 0.12,
+    QUICK_DIRECTION_CHANGE_MULTIPLIER = 1.5, GRAVITY = 196.2, AIR_CONTROL_FACTOR = 0.8,
+    AERIAL_VELOCITY_DECAY = 0.95, MIN_AIRBORNE_TIME = 0.08, FALLING_SPEED_THRESHOLD = -15,
+}
 
 -- ==========================================
 -- 1. INTRODUCCIÓN (SPLASH SCREEN)
@@ -18,7 +45,6 @@ local function playIntro()
     splashGui.DisplayOrder = 999999
     splashGui.IgnoreGuiInset = true
     
-    -- Intentar ponerlo en CoreGui para que no se buguee
     if not pcall(function() splashGui.Parent = game:GetService("CoreGui") end) then
         splashGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     end
@@ -26,7 +52,6 @@ local function playIntro()
     local overlay = Instance.new("Frame", splashGui)
     overlay.Size = UDim2.new(1,0,1,0)
     overlay.BackgroundColor3 = Color3.fromRGB(0,0,0)
-    overlay.BackgroundTransparency = 0
     overlay.BorderSizePixel = 0
     overlay.ZIndex = 1
 
@@ -51,28 +76,20 @@ local function playIntro()
     container.Size = UDim2.new(0,320,0,120)
     container.Position = UDim2.new(0.5,-160,0,-140)
     container.BackgroundTransparency = 1
-    container.BorderSizePixel = 0
     container.ZIndex = 2
-    container.ClipsDescendants = false
 
     local titleSplash = Instance.new("TextLabel", container)
     titleSplash.Size = UDim2.new(1,0,0,70)
-    titleSplash.Position = UDim2.new(0,0,0,0)
     titleSplash.BackgroundTransparency = 1
     titleSplash.Text = "SALEMS AUTO STEAL"
     titleSplash.TextColor3 = Color3.fromRGB(255,255,255)
     titleSplash.Font = Enum.Font.GothamBlack
     titleSplash.TextSize = 36
     titleSplash.TextScaled = true
-    titleSplash.TextTransparency = 0
     titleSplash.ZIndex = 3
     
     local g = Instance.new("UIGradient", titleSplash)
-    g.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(80,160,255)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200,225,255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(100,80,255))
-    })
+    g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(80,160,255)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200,225,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(100,80,255))})
 
     local subSplash = Instance.new("TextLabel", container)
     subSplash.Size = UDim2.new(1,0,0,24)
@@ -82,19 +99,11 @@ local function playIntro()
     subSplash.TextColor3 = Color3.fromRGB(100,140,200)
     subSplash.Font = Enum.Font.Gotham
     subSplash.TextSize = 13
-    subSplash.TextTransparency = 0
     subSplash.ZIndex = 3
 
     local fragments = {}
     local fragTexts = {"SA", "LE", "MS", "AU", "TO", "S"}
-    local fragColors = {
-        Color3.fromRGB(80,160,255),
-        Color3.fromRGB(140,100,255),
-        Color3.fromRGB(200,225,255),
-        Color3.fromRGB(100,80,255),
-        Color3.fromRGB(80,180,255),
-        Color3.fromRGB(160,120,255),
-    }
+    local fragColors = {Color3.fromRGB(80,160,255), Color3.fromRGB(140,100,255), Color3.fromRGB(200,225,255), Color3.fromRGB(100,80,255), Color3.fromRGB(80,180,255), Color3.fromRGB(160,120,255)}
     for i, txt in ipairs(fragTexts) do
         local frag = Instance.new("TextLabel", splashGui)
         frag.Size = UDim2.new(0,90,0,60)
@@ -107,45 +116,22 @@ local function playIntro()
         frag.TextSize = 36
         frag.TextTransparency = 1
         frag.ZIndex = 5
-        frag.Rotation = 0
         table.insert(fragments, frag)
     end
 
-    -- Sonidos
     local function prepareSound(id, pitch, vol)
-        local s = Instance.new("Sound")
-        s.SoundId = id
-        s.PlaybackSpeed = pitch
-        s.Volume = vol
-        s.Parent = SoundService
-        s.RollOffMaxDistance = 0
-        return s
+        local s = Instance.new("Sound"); s.SoundId = id; s.PlaybackSpeed = pitch; s.Volume = vol; s.Parent = SoundService; s.RollOffMaxDistance = 0; return s
     end
-    
-    local introSounds = {
-        prepareSound("rbxassetid://4612414100", 2.2, 0.7),
-        prepareSound("rbxassetid://4612414100", 1.7, 0.8),
-        prepareSound("rbxassetid://4612414100", 1.2, 0.9),
-        prepareSound("rbxassetid://4612414100", 0.85, 0.9),
-        prepareSound("rbxassetid://4612414100", 0.55, 0.7),
-        prepareSound("rbxassetid://4612414100", 0.3, 1.0),
-    }
+    local introSounds = {prepareSound("rbxassetid://4612414100", 2.2, 0.7), prepareSound("rbxassetid://4612414100", 1.7, 0.8), prepareSound("rbxassetid://4612414100", 1.2, 0.9), prepareSound("rbxassetid://4612414100", 0.85, 0.9), prepareSound("rbxassetid://4612414100", 0.55, 0.7), prepareSound("rbxassetid://4612414100", 0.3, 1.0)}
     pcall(function() ContentProvider:PreloadAsync(introSounds) end)
 
     local function playWhistle()
-        for i, s in ipairs(introSounds) do
-            task.delay(({0, 0.07, 0.15, 0.24, 0.34, 0.5})[i], function()
-                if splashGui.Parent then s:Play() end
-            end)
-        end
+        for i, s in ipairs(introSounds) do task.delay(({0, 0.07, 0.15, 0.24, 0.34, 0.5})[i], function() if splashGui.Parent then s:Play() end end) end
     end
-
     local function playGlitch()
         task.delay(0, function()
             local s1 = prepareSound("rbxassetid://1588058260", 1.0, 0.9); s1:Play(); game:GetService("Debris"):AddItem(s1, 3)
             local s2 = prepareSound("rbxassetid://8627516764", 0.8, 0.7); s2:Play(); game:GetService("Debris"):AddItem(s2, 3)
-            local s3 = prepareSound("rbxassetid://1588058260", 1.4, 0.5); s3:Play(); game:GetService("Debris"):AddItem(s3, 3)
-            local s4 = prepareSound("rbxassetid://8627516764", 1.2, 0.4); s4:Play(); game:GetService("Debris"):AddItem(s4, 3)
         end)
     end
 
@@ -158,79 +144,44 @@ local function playIntro()
         tapHint.Visible = false
         task.delay(0.5, function() splashGui:Destroy() end)
     end
-
-    skipZone.Activated:Connect(function()
-        titleSplash.TextTransparency = 1
-        subSplash.TextTransparency = 1
-        finishSplash()
-    end)
+    skipZone.Activated:Connect(function() titleSplash.TextTransparency = 1; subSplash.TextTransparency = 1; finishSplash() end)
 
     task.spawn(function()
         TweenService:Create(overlay, TweenInfo.new(0.2), {BackgroundTransparency=0.1}):Play()
         playWhistle()
-        
-        -- Animación de rebote
-        TweenService:Create(container, TweenInfo.new(0.45, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
-            {Position=UDim2.new(0.5,-160,0.5,-60)}):Play()
-            
+        TweenService:Create(container, TweenInfo.new(0.45, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {Position=UDim2.new(0.5,-160,0.5,-60)}):Play()
         task.wait(0.5)
-        
-        -- Explosión (Shatter)
         if not isSplashDone then 
             playGlitch()
-            local flash = Instance.new("Frame", splashGui)
-            flash.Size = UDim2.new(1,0,1,0)
-            flash.BackgroundColor3 = Color3.fromRGB(255,255,255)
-            flash.BackgroundTransparency = 0.3
-            flash.BorderSizePixel = 0
-            flash.ZIndex = 8
-            TweenService:Create(flash, TweenInfo.new(0.18), {BackgroundTransparency=1}):Play()
-            game:GetService("Debris"):AddItem(flash, 0.3)
+            local flash = Instance.new("Frame", splashGui); flash.Size = UDim2.new(1,0,1,0); flash.BackgroundColor3 = Color3.fromRGB(255,255,255); flash.BackgroundTransparency = 0.3; flash.BorderSizePixel = 0; flash.ZIndex = 8
+            TweenService:Create(flash, TweenInfo.new(0.18), {BackgroundTransparency=1}):Play(); game:GetService("Debris"):AddItem(flash, 0.3)
             titleSplash.TextTransparency = 1
-
             for i, frag in ipairs(fragments) do
                 frag.TextTransparency = 0
-                local dirX = (i - 3.5) * 60 + math.random(-80, 80)
-                local dirY = math.random(120, 280)
-                local rot = math.random(-180, 180)
-                local t = 0
-                local conn
-                conn = RunService.RenderStepped:Connect(function(dt)
-                    t = t + dt
-                    if t > 0.8 then frag.TextTransparency = 1; conn:Disconnect(); return end
+                local dirX, dirY, rot, t = (i - 3.5) * 60 + math.random(-80, 80), math.random(120, 280), math.random(-180, 180), 0
+                RunService.RenderStepped:Connect(function(dt)
+                    t = t + dt; if t > 0.8 then frag.TextTransparency = 1; return end
                     local alpha = t / 0.8
-                    local px = (i-3.5)*52 + dirX * alpha
-                    local py = -30 - dirY * alpha + 300 * alpha * alpha
-                    frag.Position = UDim2.new(0.5, px, 0.5, py)
-                    frag.Rotation = rot * alpha
-                    frag.TextTransparency = math.clamp(alpha * 1.4 - 0.3, 0, 1)
+                    frag.Position = UDim2.new(0.5, (i-3.5)*52 + dirX * alpha, 0.5, -30 - dirY * alpha + 300 * alpha * alpha)
+                    frag.Rotation = rot * alpha; frag.TextTransparency = math.clamp(alpha * 1.4 - 0.3, 0, 1)
                 end)
             end
         end
-        
-        task.wait(0.85)
-        finishSplash()
-        task.wait(0.5)
+        task.wait(0.85); finishSplash(); task.wait(0.5)
     end)
 end
 
 -- ==========================================
--- 2. LÓGICA DEL AUTO STEAL (DESPUÉS DE LA INTRO)
+-- 2. LÓGICA DEL AUTO STEAL
 -- ==========================================
-local CONFIG = { AUTO_STEAL_ENABLED = true, RADIUS = 65, HOLD_MIN = 1.3, HOLD_MAX = 2.6, NEAR_TARGET_RANGE = 20, FIRE_RANGE = 12, ENTRY_DELAY = 0.3 }
-local v1Progress = 0
-local V3New = { busy = false, data = {}, generation = 0 }
-
 local function getPromptCallbacks(prompt, cacheTable)
-    local data = cacheTable[prompt]
-    if data then return data end
+    local data = cacheTable[prompt]; if data then return data end
     data = { hold = {}, trigger = {}, ready = true }
     if getconnections then
         for _, conn in ipairs(getconnections(prompt.PromptButtonHoldBegan)) do if conn.Function then table.insert(data.hold, conn.Function) end end
         for _, conn in ipairs(getconnections(prompt.Triggered)) do if conn.Function then table.insert(data.trigger, conn.Function) end end
     end
-    cacheTable[prompt] = data
-    return data
+    cacheTable[prompt] = data; return data
 end
 
 local function getCachedStealPrompt(spawn)
@@ -326,7 +277,157 @@ local function executeV1(prompt)
 end
 
 -- ==========================================
--- 3. INTERFAZ (BARRA) Y ARRANQUE
+-- 3. LÓGICA DEL AIMBOT (GLAZIER)
+-- ==========================================
+local function getBat()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local equippedTool = char:FindFirstChildOfClass("Tool")
+    if equippedTool and equippedTool.Name:lower():find("bat") then return equippedTool end
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name:lower():find("bat") then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then pcall(function() hum:EquipTool(tool) end) end
+                return char:FindFirstChild(tool.Name) or tool
+            end
+        end
+    end
+    return nil
+end
+
+local function averageVector(history)
+    if #history == 0 then return Vector3.zero end
+    local total = Vector3.zero
+    for _, value in ipairs(history) do total += value end
+    return total / #history
+end
+
+local function pushHistory(history, value, maximum)
+    table.insert(history, value)
+    if #history > maximum then table.remove(history, 1) end
+end
+
+local function resetZurichTarget()
+    Z.targetPlayer = nil; Z.lastTargetPos = nil; Z.targetVelocity = Vector3.zero; Z.smoothedVelocity = Vector3.zero
+    Z.velocityHistory = {}; Z.accelerationHistory = {}; Z.aerialVelocityHistory = {}; Z.verticalVelocityHistory = {}
+    Z.previousDirection = nil; Z.airborneTime = 0; Z.lastYVelocity = 0
+end
+
+local function nearestZurichTarget(root)
+    local nearest, nearestDistance = nil, math.huge
+    for _, candidate in ipairs(Players:GetPlayers()) do
+        if candidate ~= LocalPlayer and candidate.Character then
+            local targetRoot = candidate.Character:FindFirstChild("HumanoidRootPart")
+            local targetHumanoid = candidate.Character:FindFirstChildOfClass("Humanoid")
+            if targetRoot and targetHumanoid and targetHumanoid.Health > 0 then
+                local distance = (root.Position - targetRoot.Position).Magnitude
+                if distance < nearestDistance then nearest, nearestDistance = candidate, distance end
+            end
+        end
+    end
+    return nearest
+end
+
+local function rotateZurichRoot(root, direction)
+    if direction.Magnitude < 0.01 then return end
+    local axis = root.CFrame.LookVector:Cross(direction.Unit)
+    local angle = math.asin(math.clamp(axis.Magnitude, -1, 1))
+    root.AssemblyAngularVelocity = axis.Magnitude > 0.01 and axis.Unit * angle * 80 or Vector3.zero
+end
+
+local function sampleZurichPing()
+    local ok, value = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
+    if ok and type(value) == "number" then Z.realPingMs = math.floor(value) end
+    Z.currentPing = math.clamp(Z.realPingMs / 1000, ZCFG.MIN_PING_COMPENSATION, ZCFG.MAX_PING_COMPENSATION)
+end
+
+local function stopZurichAimbot()
+    if zurichConn then zurichConn:Disconnect(); zurichConn = nil end
+    local char = LocalPlayer.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if humanoid then humanoid.AutoRotate = true end
+    if root then root.AssemblyAngularVelocity = Vector3.zero end
+    resetZurichTarget(); Z.lastActivationTime = 0
+end
+
+local function startZurichAimbot(char)
+    char = char or LocalPlayer.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not root then return end
+    stopZurichAimbot()
+    humanoid.AutoRotate = false
+    
+    zurichConn = RunService.RenderStepped:Connect(function(dt)
+        if not AimbotEnabled then stopZurichAimbot(); return end
+        local currentChar = LocalPlayer.Character
+        local currentRoot = currentChar and currentChar:FindFirstChild("HumanoidRootPart")
+        local currentHumanoid = currentChar and currentChar:FindFirstChildOfClass("Humanoid")
+        if not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 then return end
+        currentHumanoid.AutoRotate = false
+        root, humanoid = currentRoot, currentHumanoid
+        
+        local bat = currentChar:FindFirstChildOfClass("Tool") or getBat()
+        if bat and bat.Parent ~= currentChar then pcall(currentHumanoid:EquipTool(bat)) end
+
+        Z.targetPlayer = nearestZurichTarget(root)
+        local targetChar = Z.targetPlayer and Z.targetPlayer.Character
+        local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        local targetHumanoid = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+        if not targetRoot or not targetHumanoid or targetHumanoid.Health <= 0 then resetZurichTarget(); return end
+        
+        local targetPos = targetRoot.Position
+        local safeDt = math.max(dt, 1 / 240)
+        
+        if Z.lastTargetPos then
+            local rawVelocity = (targetPos - Z.lastTargetPos) / safeDt
+            local velocityDelta = rawVelocity - Z.targetVelocity
+            if velocityDelta.Magnitude > ZCFG.MAX_VELOCITY_CHANGE then
+                rawVelocity = Z.targetVelocity + velocityDelta.Unit * ZCFG.MAX_VELOCITY_CHANGE
+            end
+            local horizontal = Vector3.new(rawVelocity.X, 0, rawVelocity.Z)
+            if horizontal.Magnitude > ZCFG.MAX_HORIZONTAL_VELOCITY then
+                horizontal = horizontal.Unit * ZCFG.MAX_HORIZONTAL_VELOCITY
+                rawVelocity = Vector3.new(horizontal.X, rawVelocity.Y, horizontal.Z)
+            end
+            pushHistory(Z.accelerationHistory, (rawVelocity - Z.targetVelocity) / safeDt, 4)
+            pushHistory(Z.velocityHistory, rawVelocity, 8)
+            Z.targetVelocity = rawVelocity
+            Z.smoothedVelocity = Z.smoothedVelocity:Lerp(rawVelocity, ZCFG.VELOCITY_SMOOTHING)
+        end
+        Z.lastTargetPos = targetPos
+
+        local serverDelay = Z.currentPing + ZCFG.SERVER_TICKRATE
+        local predicted = targetPos + Z.smoothedVelocity * serverDelay
+        local acceleration = averageVector(Z.accelerationHistory)
+        predicted += acceleration * ZCFG.ACCELERATION_PREDICTION_WEIGHT * (serverDelay * serverDelay * 0.5)
+        
+        local predictionTime = ZCFG.PREDICTION_TIME * 1.1
+        predicted += Z.smoothedVelocity * predictionTime
+        local flatPrediction = Vector3.new(Z.smoothedVelocity.X, 0, Z.smoothedVelocity.Z)
+        if flatPrediction.Magnitude > 1 then predicted += flatPrediction.Unit * ZCFG.PREDICT_AHEAD end
+        
+        local toTarget = predicted - root.Position
+        rotateZurichRoot(root, toTarget)
+        
+        if (targetPos - root.Position).Magnitude <= ZCFG.ACTIVATE_DISTANCE and tick() - Z.lastActivationTime >= 0.3 then
+            if bat then pcall(bat.Activate, bat) end
+            Z.lastActivationTime = tick()
+        end
+        
+        if toTarget.Magnitude > ZCFG.MIN_FOLLOW_DISTANCE then
+            root.AssemblyLinearVelocity = toTarget.Unit * math.clamp(AimbotSpeed, 1, 120)
+        else
+            root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y * 0.5, 0)
+        end
+    end)
+end
+
+-- ==========================================
+-- 4. INTERFAZ (BARRA, FPS, PING Y AIMBOT)
 -- ==========================================
 local function createUI()
     local ScreenGui = Instance.new("ScreenGui")
@@ -335,6 +436,7 @@ local function createUI()
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
+    -- Barra de Auto Steal
     local grabBar = Instance.new("Frame", ScreenGui)
     grabBar.Size = UDim2.new(0, 300, 0, 45)
     grabBar.Position = UDim2.new(0.5, -150, 0.85, 0)
@@ -343,10 +445,7 @@ local function createUI()
     Instance.new("UICorner", grabBar).CornerRadius = UDim.new(0, 10)
 
     local BgImage = Instance.new("ImageLabel", grabBar)
-    BgImage.Size = UDim2.new(1, 0, 1, 0)
-    BgImage.BackgroundTransparency = 1
-    BgImage.ScaleType = Enum.ScaleType.Crop
-    BgImage.ZIndex = 1
+    BgImage.Size = UDim2.new(1, 0, 1, 0); BgImage.BackgroundTransparency = 1; BgImage.ScaleType = Enum.ScaleType.Crop; BgImage.ZIndex = 1
     Instance.new("UICorner", BgImage).CornerRadius = UDim.new(0, 10)
     
     task.spawn(function()
@@ -355,66 +454,35 @@ local function createUI()
         local loader = getcustomasset or getsynasset
         if loader and writefile then
             pcall(function()
-                if not isfile(fileName) then
-                    local body = game:HttpGet(url)
-                    writefile(fileName, body)
-                end
+                if not isfile(fileName) then local body = game:HttpGet(url); writefile(fileName, body) end
                 BgImage.Image = loader(fileName)
             end)
         end
     end)
 
     local DarkOverlay = Instance.new("Frame", grabBar)
-    DarkOverlay.Size = UDim2.new(1, 0, 1, 0)
-    DarkOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    DarkOverlay.BackgroundTransparency = 0.3 
-    DarkOverlay.ZIndex = 2
+    DarkOverlay.Size = UDim2.new(1, 0, 1, 0); DarkOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0); DarkOverlay.BackgroundTransparency = 0.3; DarkOverlay.ZIndex = 2
     Instance.new("UICorner", DarkOverlay).CornerRadius = UDim.new(0, 10)
 
     local BarStroke = Instance.new("UIStroke", grabBar)
-    BarStroke.Color = Color3.fromRGB(92, 181, 255)
-    BarStroke.Thickness = 1.5
-    BarStroke.Transparency = 0.2
+    BarStroke.Color = Color3.fromRGB(92, 181, 255); BarStroke.Thickness = 1.5; BarStroke.Transparency = 0.2
 
     local barBg = Instance.new("Frame", grabBar)
-    barBg.Size = UDim2.new(1, -24, 0, 6)
-    barBg.Position = UDim2.new(0, 12, 1, -12)
-    barBg.BackgroundColor3 = Color3.fromRGB(30, 40, 60)
-    barBg.BorderSizePixel = 0
-    barBg.ZIndex = 3
+    barBg.Size = UDim2.new(1, -24, 0, 6); barBg.Position = UDim2.new(0, 12, 1, -12); barBg.BackgroundColor3 = Color3.fromRGB(30, 40, 60); barBg.BorderSizePixel = 0; barBg.ZIndex = 3
     Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
 
     local barFill = Instance.new("Frame", barBg)
-    barFill.Size = UDim2.new(0, 0, 1, 0)
-    barFill.BackgroundColor3 = Color3.fromRGB(92, 181, 255)
-    barFill.BorderSizePixel = 0
-    barFill.ZIndex = 3
+    barFill.Size = UDim2.new(0, 0, 1, 0); barFill.BackgroundColor3 = Color3.fromRGB(92, 181, 255); barFill.BorderSizePixel = 0; barFill.ZIndex = 3
     Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
 
     local BarGradient = Instance.new("UIGradient", barFill)
-    BarGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 255, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 100, 255)),
-    })
+    BarGradient.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 255, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 100, 255))})
 
     local barTextContainer = Instance.new("Frame", grabBar)
-    barTextContainer.Size = UDim2.new(1, -130, 0, 20)
-    barTextContainer.Position = UDim2.new(0, 12, 0, 6)
-    barTextContainer.BackgroundTransparency = 1
-    barTextContainer.ClipsDescendants = true
-    barTextContainer.ZIndex = 3
+    barTextContainer.Size = UDim2.new(1, -130, 0, 20); barTextContainer.Position = UDim2.new(0, 12, 0, 6); barTextContainer.BackgroundTransparency = 1; barTextContainer.ClipsDescendants = true; barTextContainer.ZIndex = 3
 
     local barText = Instance.new("TextLabel", barTextContainer)
-    barText.Size = UDim2.new(0, 150, 1, 0)
-    barText.Position = UDim2.new(1, 0, 0, 0)
-    barText.BackgroundTransparency = 1
-    barText.Text = "SALEMS AUTO STEAL"
-    barText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    barText.Font = Enum.Font.GothamBold
-    barText.TextSize = 11
-    barText.TextXAlignment = Enum.TextXAlignment.Left
-    barText.ZIndex = 3
-    barText.TextStrokeTransparency = 0.5
+    barText.Size = UDim2.new(0, 150, 1, 0); barText.Position = UDim2.new(1, 0, 0, 0); barText.BackgroundTransparency = 1; barText.Text = "SALEMS AUTO STEAL"; barText.TextColor3 = Color3.fromRGB(255, 255, 255); barText.Font = Enum.Font.GothamBold; barText.TextSize = 11; barText.TextXAlignment = Enum.TextXAlignment.Left; barText.ZIndex = 3; barText.TextStrokeTransparency = 0.5
 
     task.spawn(function()
         while barText.Parent do
@@ -425,76 +493,65 @@ local function createUI()
     end)
 
     local percentLabel = Instance.new("TextLabel", grabBar)
-    percentLabel.Size = UDim2.new(0, 45, 0, 20)
-    percentLabel.Position = UDim2.new(1, -50, 0, 2)
-    percentLabel.BackgroundTransparency = 1
-    percentLabel.Text = "0%"
-    percentLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
-    percentLabel.Font = Enum.Font.GothamBold
-    percentLabel.TextSize = 11
-    percentLabel.TextXAlignment = Enum.TextXAlignment.Right
-    percentLabel.ZIndex = 3
-    percentLabel.TextStrokeTransparency = 0.5
+    percentLabel.Size = UDim2.new(0, 45, 0, 20); percentLabel.Position = UDim2.new(1, -50, 0, 2); percentLabel.BackgroundTransparency = 1; percentLabel.Text = "0%"; percentLabel.TextColor3 = Color3.fromRGB(0, 255, 255); percentLabel.Font = Enum.Font.GothamBold; percentLabel.TextSize = 11; percentLabel.TextXAlignment = Enum.TextXAlignment.Right; percentLabel.ZIndex = 3; percentLabel.TextStrokeTransparency = 0.5
 
     local StatsFrame = Instance.new("Frame", grabBar)
-    StatsFrame.Size = UDim2.new(0, 45, 0, 20)
-    StatsFrame.Position = UDim2.new(1, -95, 0, 2)
-    StatsFrame.BackgroundTransparency = 1
-    StatsFrame.ZIndex = 3
+    StatsFrame.Size = UDim2.new(0, 45, 0, 20); StatsFrame.Position = UDim2.new(1, -95, 0, 2); StatsFrame.BackgroundTransparency = 1; StatsFrame.ZIndex = 3
 
     local FPSLabel = Instance.new("TextLabel", StatsFrame)
-    FPSLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    FPSLabel.BackgroundTransparency = 1
-    FPSLabel.Text = "0 FPS"
-    FPSLabel.TextColor3 = Color3.fromRGB(50, 255, 50)
-    FPSLabel.Font = Enum.Font.GothamBold
-    FPSLabel.TextSize = 10
-    FPSLabel.TextXAlignment = Enum.TextXAlignment.Right
-    FPSLabel.TextStrokeTransparency = 0
+    FPSLabel.Size = UDim2.new(1, 0, 0.5, 0); FPSLabel.BackgroundTransparency = 1; FPSLabel.Text = "0 FPS"; FPSLabel.TextColor3 = Color3.fromRGB(50, 255, 50); FPSLabel.Font = Enum.Font.GothamBold; FPSLabel.TextSize = 10; FPSLabel.TextXAlignment = Enum.TextXAlignment.Right; FPSLabel.TextStrokeTransparency = 0
 
     local PingLabel = Instance.new("TextLabel", StatsFrame)
-    PingLabel.Size = UDim2.new(1, 0, 0.5, 0)
-    PingLabel.Position = UDim2.new(0, 0, 0.5, 0)
-    PingLabel.BackgroundTransparency = 1
-    PingLabel.Text = "0 MS"
-    PingLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-    PingLabel.Font = Enum.Font.GothamBold
-    PingLabel.TextSize = 10
-    PingLabel.TextXAlignment = Enum.TextXAlignment.Right
-    PingLabel.TextStrokeTransparency = 0
+    PingLabel.Size = UDim2.new(1, 0, 0.5, 0); PingLabel.Position = UDim2.new(0, 0, 0.5, 0); PingLabel.BackgroundTransparency = 1; PingLabel.Text = "0 MS"; PingLabel.TextColor3 = Color3.fromRGB(255, 255, 0); PingLabel.Font = Enum.Font.GothamBold; PingLabel.TextSize = 10; PingLabel.TextXAlignment = Enum.TextXAlignment.Right; PingLabel.TextStrokeTransparency = 0
 
-    local frames = 0
-    local lastTime = tick()
-    RunService.RenderStepped:Connect(function()
-        frames = frames + 1
-        local now = tick()
-        if now - lastTime >= 1 then
-            FPSLabel.Text = math.floor(frames / (now - lastTime)) .. " FPS"
-            frames = 0
-            lastTime = now
+    -- BOTÓN DEL AIMBOT (A la derecha)
+    local AimBtn = Instance.new("TextButton", ScreenGui)
+    AimBtn.Size = UDim2.new(0, 50, 0, 50)
+    AimBtn.Position = UDim2.new(1, -70, 0.5, -25)
+    AimBtn.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
+    AimBtn.Text = "AIM\nOFF"
+    AimBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    AimBtn.Font = Enum.Font.GothamBlack
+    AimBtn.TextSize = 10
+    Instance.new("UICorner", AimBtn).CornerRadius = UDim.new(1, 0)
+    local AimStroke = Instance.new("UIStroke", AimBtn); AimStroke.Color = Color3.fromRGB(100, 100, 100); AimStroke.Thickness = 1.5
+
+    -- Hacerlo arrastrable
+    local dragging, dragInput, dragStart, startPos
+    AimBtn.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true; dragStart = input.Position; startPos = AimBtn.Position end end)
+    AimBtn.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
+    UserInputService.InputChanged:Connect(function(input) if input == dragInput and dragging then local delta = input.Position - dragStart; AimBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y) end end)
+    UserInputService.InputEnded:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end end)
+
+    AimBtn.MouseButton1Click:Connect(function()
+        AimbotEnabled = not AimbotEnabled
+        if AimbotEnabled then
+            AimBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50); AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255); AimStroke.Color = Color3.fromRGB(50, 200, 50)
+            AimBtn.Text = "AIM\nON"
+            startZurichAimbot(LocalPlayer.Character)
+        else
+            AimBtn.BackgroundColor3 = Color3.fromRGB(20, 25, 35); AimBtn.TextColor3 = Color3.fromRGB(200, 200, 200); AimStroke.Color = Color3.fromRGB(100, 100, 100)
+            AimBtn.Text = "AIM\nOFF"
+            stopZurichAimbot()
         end
     end)
 
+    -- Lógica de FPS
+    local frames = 0; local lastTime = tick()
+    RunService.RenderStepped:Connect(function()
+        frames = frames + 1; local now = tick()
+        if now - lastTime >= 1 then FPSLabel.Text = math.floor(frames / (now - lastTime)) .. " FPS"; frames = 0; lastTime = now end
+    end)
+
+    -- Lógica de Ping
     task.spawn(function()
         while task.wait(2) do
-            local ok, ping = pcall(function()
-                return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-            end)
-            if ok and ping then
-                PingLabel.Text = math.floor(ping) .. " MS"
-            end
+            local ok, ping = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
+            if ok and ping then PingLabel.Text = math.floor(ping) .. " MS" end
         end
     end)
 
-    task.spawn(function()
-        while grabBar.Parent do
-            TweenService:Create(BarStroke, TweenInfo.new(0.5), {Transparency = 0.8}):Play()
-            task.wait(0.5)
-            TweenService:Create(BarStroke, TweenInfo.new(0.5), {Transparency = 0.2}):Play()
-            task.wait(0.5)
-        end
-    end)
-
+    -- Actualización de la barra
     RunService.Heartbeat:Connect(function()
         local targetW = math.clamp(v1Progress * barBg.AbsoluteSize.X, 0, barBg.AbsoluteSize.X)
         barFill.Size = UDim2.new(0, targetW, 1, 0)
@@ -505,13 +562,9 @@ end
 -- ==========================================
 -- ARRANQUE DEL SCRIPT
 -- ==========================================
--- 1. Mostrar la Intro
 playIntro()
-
--- 2. Esperar a que cargue el juego
 repeat task.wait() until game:IsLoaded()
 
--- 3. Iniciar el Auto Steal y crear la Barra
 task.spawn(function()
     while task.wait(0.15) do
         if CONFIG.AUTO_STEAL_ENABLED and not V3New.busy and LocalPlayer:GetAttribute("Stealing") ~= true then
@@ -520,4 +573,5 @@ task.spawn(function()
         end
     end
 end)
+
 createUI()
