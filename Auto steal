@@ -1,0 +1,356 @@
+-- ==========================================
+-- SALEMS AUTO STEAL CON FONDO Y ESTADÍSTICAS
+-- ==========================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+-- CONFIGURACIÓN
+local CONFIG = { 
+    AUTO_STEAL_ENABLED = true, 
+    RADIUS = 65, 
+    HOLD_MIN = 1.3, 
+    HOLD_MAX = 2.6, 
+    NEAR_TARGET_RANGE = 20, 
+    FIRE_RANGE = 12, 
+    ENTRY_DELAY = 0.3 
+}
+
+local v1Progress = 0
+local V3New = { busy = false, data = {}, generation = 0 }
+
+-- ==========================================
+-- 1. LÓGICA DEL AUTO STEAL
+-- ==========================================
+local function getPromptCallbacks(prompt, cacheTable)
+    local data = cacheTable[prompt]
+    if data then return data end
+    data = { hold = {}, trigger = {}, ready = true }
+    if getconnections then
+        for _, conn in ipairs(getconnections(prompt.PromptButtonHoldBegan)) do 
+            if conn.Function then table.insert(data.hold, conn.Function) end 
+        end
+        for _, conn in ipairs(getconnections(prompt.Triggered)) do 
+            if conn.Function then table.insert(data.trigger, conn.Function) end 
+        end
+    end
+    cacheTable[prompt] = data
+    return data
+end
+
+local function getCachedStealPrompt(spawn)
+    if not spawn then return nil end
+    local promptAttachment = spawn:FindFirstChild("PromptAttachment")
+    local candidates = promptAttachment and promptAttachment:GetChildren() or spawn:GetDescendants()
+    for _, candidate in ipairs(candidates) do
+        if candidate:IsA("ProximityPrompt") and candidate.ActionText and candidate.ActionText:find("Steal") then 
+            return candidate 
+        end
+    end
+    return nil
+end
+
+local function findNearestPrompt(radius)
+    local char = LocalPlayer.Character
+    local root = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso"))
+    if not root then return nil end
+    
+    local nearest, nearestDistSq = nil, math.huge
+    local radiusSq = radius * radius
+    local plots = workspace:FindFirstChild("Plots") or workspace
+    
+    for _, plot in ipairs(plots:GetChildren()) do
+        local sign = plot:FindFirstChild("PlotSign")
+        local yourBase = sign and sign:FindFirstChild("YourBase")
+        if plot:IsA("Model") and not (yourBase and yourBase:IsA("BillboardGui") and yourBase.Enabled) then
+            local pods = plot:FindFirstChild("AnimalPodiums")
+            if pods then
+                for _, pod in ipairs(pods:GetChildren()) do
+                    local spawn = pod:FindFirstChild("Base") and pod.Base:FindFirstChild("Spawn")
+                    if spawn then
+                        local delta = spawn.Position - root.Position
+                        local distanceSq = delta:Dot(delta)
+                        if distanceSq <= radiusSq and distanceSq < nearestDistSq then
+                            local prompt = getCachedStealPrompt(spawn)
+                            if prompt then nearest, nearestDistSq = prompt, distanceSq end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+local function getPromptDistance(prompt)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return math.huge end
+    local part = prompt.Parent
+    if part and part:IsA("Attachment") then part = part.Parent end
+    if part and part:IsA("BasePart") then return (part.Position - root.Position).Magnitude end
+    return math.huge
+end
+
+local function triggerPrompt(prompt, data)
+    if not prompt or not prompt.Parent then return false end
+    if LocalPlayer:GetAttribute("Stealing") == true then return false end
+    local invoked = false
+    for _, callback in ipairs(data.trigger) do 
+        if pcall(callback) then invoked = true end 
+    end
+    if not invoked and typeof(fireproximityprompt) == "function" then 
+        invoked = pcall(fireproximityprompt, prompt) 
+    end
+    return invoked
+end
+
+local function executeV1(prompt)
+    if V3New.busy or not prompt or not prompt.Parent then return end
+    if LocalPlayer:GetAttribute("Stealing") == true then return end
+    
+    local data = getPromptCallbacks(prompt, V3New.data)
+    if not data.ready then return end
+    
+    data.ready = false
+    V3New.busy = true
+    V3New.generation = V3New.generation + 1
+    local runGen = V3New.generation
+    
+    task.spawn(function()
+        for _, callback in ipairs(data.hold) do task.spawn(callback) end
+        local holdStart = tick()
+        
+        while V3New.busy and tick() - holdStart < CONFIG.HOLD_MIN do
+            if runGen ~= V3New.generation then return end
+            v1Progress = math.clamp((tick() - holdStart) / CONFIG.HOLD_MIN, 0, 1)
+            task.wait(0.05)
+        end
+        
+        if runGen ~= V3New.generation then return end
+        v1Progress = 1
+        
+        local wasInRange = getPromptDistance(prompt) <= CONFIG.FIRE_RANGE
+        while runGen == V3New.generation and prompt.Parent and CONFIG.AUTO_STEAL_ENABLED and LocalPlayer:GetAttribute("Stealing") ~= true do
+            v1Progress = 1
+            local promptDistance = getPromptDistance(prompt)
+            if promptDistance > CONFIG.NEAR_TARGET_RANGE and tick() - holdStart > CONFIG.HOLD_MAX then break end
+            
+            if promptDistance <= CONFIG.FIRE_RANGE then
+                if not wasInRange then
+                    task.wait(CONFIG.ENTRY_DELAY)
+                    if runGen ~= V3New.generation or not prompt.Parent or getPromptDistance(prompt) > CONFIG.FIRE_RANGE then 
+                        task.wait(0.05)
+                        continue 
+                    end
+                end
+                if triggerPrompt(prompt, data) then break end
+            end
+            task.wait(0.05)
+        end
+        
+        V3New.busy = false
+        data.ready = true
+        v1Progress = 0
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.15) do
+        if CONFIG.AUTO_STEAL_ENABLED and not V3New.busy and LocalPlayer:GetAttribute("Stealing") ~= true then
+            local prompt = findNearestPrompt(CONFIG.RADIUS)
+            if prompt then executeV1(prompt) end
+        end
+    end
+end)
+
+-- ==========================================
+-- 2. INTERFAZ GRÁFICA CON FONDO Y STATS
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SalemsAutoStealBar"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Ventana Principal de la Barra
+local grabBar = Instance.new("Frame", ScreenGui)
+grabBar.Size = UDim2.new(0, 300, 0, 45)
+grabBar.Position = UDim2.new(0.5, -150, 0.85, 0)
+grabBar.BackgroundColor3 = Color3.fromRGB(10, 12, 22)
+grabBar.BorderSizePixel = 0
+Instance.new("UICorner", grabBar).CornerRadius = UDim.new(0, 10)
+
+-- 1. Imagen de Fondo
+local BgImage = Instance.new("ImageLabel", grabBar)
+BgImage.Size = UDim2.new(1, 0, 1, 0)
+BgImage.BackgroundTransparency = 1
+BgImage.ScaleType = Enum.ScaleType.Crop
+BgImage.ZIndex = 1
+Instance.new("UICorner", BgImage).CornerRadius = UDim.new(0, 10)
+
+task.spawn(function()
+    local url = "https://files.catbox.moe/ca5tsq.jpg" 
+    local fileName = "salems_bg_ice.jpg"
+    local loader = getcustomasset or getsynasset
+    
+    if loader and writefile then
+        pcall(function()
+            if not isfile(fileName) then
+                local body = game:HttpGet(url)
+                writefile(fileName, body)
+            end
+            BgImage.Image = loader(fileName)
+        end)
+    end
+end)
+
+-- 2. Capa Oscura
+local DarkOverlay = Instance.new("Frame", grabBar)
+DarkOverlay.Size = UDim2.new(1, 0, 1, 0)
+DarkOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+DarkOverlay.BackgroundTransparency = 0.3 
+DarkOverlay.ZIndex = 2
+Instance.new("UICorner", DarkOverlay).CornerRadius = UDim.new(0, 10)
+
+-- 3. Borde de la barra
+local BarStroke = Instance.new("UIStroke", grabBar)
+BarStroke.Color = Color3.fromRGB(92, 181, 255)
+BarStroke.Thickness = 1.5
+BarStroke.Transparency = 0.2
+
+-- 4. Barra de progreso
+local barBg = Instance.new("Frame", grabBar)
+barBg.Size = UDim2.new(1, -24, 0, 6)
+barBg.Position = UDim2.new(0, 12, 1, -12)
+barBg.BackgroundColor3 = Color3.fromRGB(30, 40, 60)
+barBg.BorderSizePixel = 0
+barBg.ZIndex = 3
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+local barFill = Instance.new("Frame", barBg)
+barFill.Size = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(92, 181, 255)
+barFill.BorderSizePixel = 0
+barFill.ZIndex = 3
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
+
+local BarGradient = Instance.new("UIGradient", barFill)
+BarGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 255, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 100, 255)),
+})
+
+-- 5. Texto deslizante
+local barTextContainer = Instance.new("Frame", grabBar)
+barTextContainer.Size = UDim2.new(1, -130, 0, 20)
+barTextContainer.Position = UDim2.new(0, 12, 0, 6)
+barTextContainer.BackgroundTransparency = 1
+barTextContainer.ClipsDescendants = true
+barTextContainer.ZIndex = 3
+
+local barText = Instance.new("TextLabel", barTextContainer)
+barText.Size = UDim2.new(0, 150, 1, 0)
+barText.Position = UDim2.new(1, 0, 0, 0)
+barText.BackgroundTransparency = 1
+barText.Text = "SALEMS AUTO STEAL"
+barText.TextColor3 = Color3.fromRGB(255, 255, 255)
+barText.Font = Enum.Font.GothamBold
+barText.TextSize = 11
+barText.TextXAlignment = Enum.TextXAlignment.Left
+barText.ZIndex = 3
+barText.TextStrokeTransparency = 0.5
+
+task.spawn(function()
+    while barText.Parent do
+        barText.Position = UDim2.new(1, 0, 0, 0)
+        TweenService:Create(barText, TweenInfo.new(3, Enum.EasingStyle.Linear), {Position = UDim2.new(-1, 0, 0, 0)}):Play()
+        task.wait(3)
+    end
+end)
+
+-- 6. Porcentaje
+local percentLabel = Instance.new("TextLabel", grabBar)
+percentLabel.Size = UDim2.new(0, 45, 0, 20)
+percentLabel.Position = UDim2.new(1, -50, 0, 2)
+percentLabel.BackgroundTransparency = 1
+percentLabel.Text = "0%"
+percentLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
+percentLabel.Font = Enum.Font.GothamBold
+percentLabel.TextSize = 11
+percentLabel.TextXAlignment = Enum.TextXAlignment.Right
+percentLabel.ZIndex = 3
+percentLabel.TextStrokeTransparency = 0.5
+
+-- 7. FPS y PING (Colores Neón Mejorados)
+local StatsFrame = Instance.new("Frame", grabBar)
+StatsFrame.Size = UDim2.new(0, 45, 0, 20)
+StatsFrame.Position = UDim2.new(1, -95, 0, 2)
+StatsFrame.BackgroundTransparency = 1
+StatsFrame.ZIndex = 3
+
+local FPSLabel = Instance.new("TextLabel", StatsFrame)
+FPSLabel.Size = UDim2.new(1, 0, 0.5, 0)
+FPSLabel.BackgroundTransparency = 1
+FPSLabel.Text = "0 FPS"
+FPSLabel.TextColor3 = Color3.fromRGB(50, 255, 50) -- Verde Neón
+FPSLabel.Font = Enum.Font.GothamBold
+FPSLabel.TextSize = 10 -- Un poquito más grande
+FPSLabel.TextXAlignment = Enum.TextXAlignment.Right
+FPSLabel.TextStrokeTransparency = 0 -- Borde negro sólido para que resalte
+
+local PingLabel = Instance.new("TextLabel", StatsFrame)
+PingLabel.Size = UDim2.new(1, 0, 0.5, 0)
+PingLabel.Position = UDim2.new(0, 0, 0.5, 0)
+PingLabel.BackgroundTransparency = 1
+PingLabel.Text = "0 MS"
+PingLabel.TextColor3 = Color3.fromRGB(255, 255, 0) -- Amarillo Neón
+PingLabel.Font = Enum.Font.GothamBold
+PingLabel.TextSize = 10
+PingLabel.TextXAlignment = Enum.TextXAlignment.Right
+PingLabel.TextStrokeTransparency = 0
+
+-- Lógica de los FPS
+local frames = 0
+local lastTime = tick()
+RunService.RenderStepped:Connect(function()
+    frames = frames + 1
+    local now = tick()
+    if now - lastTime >= 1 then
+        FPSLabel.Text = math.floor(frames / (now - lastTime)) .. " FPS"
+        frames = 0
+        lastTime = now
+    end
+end)
+
+-- Lógica del Ping
+task.spawn(function()
+    while task.wait(2) do
+        local ok, ping = pcall(function()
+            return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+        end)
+        if ok and ping then
+            PingLabel.Text = math.floor(ping) .. " MS"
+        end
+    end
+end)
+
+-- Efecto de respiración del borde
+task.spawn(function()
+    while grabBar.Parent do
+        TweenService:Create(BarStroke, TweenInfo.new(0.5), {Transparency = 0.8}):Play()
+        task.wait(0.5)
+        TweenService:Create(BarStroke, TweenInfo.new(0.5), {Transparency = 0.2}):Play()
+        task.wait(0.5)
+    end
+end)
+
+-- ==========================================
+-- 3. ACTUALIZACIÓN DE LA BARRA
+-- ==========================================
+RunService.Heartbeat:Connect(function()
+    local targetW = math.clamp(v1Progress * barBg.AbsoluteSize.X, 0, barBg.AbsoluteSize.X)
+    barFill.Size = UDim2.new(0, targetW, 1, 0)
+    percentLabel.Text = math.floor(v1Progress * 100) .. "%"
+end)
