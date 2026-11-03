@@ -1,5 +1,5 @@
 -- ==========================================
--- SALEMS HUB - AUTO STEAL + AIMBOT GLAZIER
+-- SALEMS HUB - AUTO STEAL + AIMBOT + ANTI RAGDOLL
 -- ==========================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -172,7 +172,62 @@ local function playIntro()
 end
 
 -- ==========================================
--- 2. LÓGICA DEL AUTO STEAL
+-- 2. ANTI RAGDOLL (GLAZIER - SIEMPRE ACTIVO)
+-- ==========================================
+local function startAntiRagdoll()
+    local resetCooldown = 0
+    RunService.Heartbeat:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or hum.Health <= 0 then return end
+
+        local state = hum:GetState()
+        local now = tick()
+        
+        -- Detectar si estamos en Ragdoll, Physics o cayendo
+        if state == Enum.HumanoidStateType.Physics or
+           state == Enum.HumanoidStateType.Ragdoll or
+           state == Enum.HumanoidStateType.FallingDown then
+           
+            if now - resetCooldown > 0.15 then
+                resetCooldown = now
+                pcall(function()
+                    -- Forzar levantarse
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    
+                    -- Quitar velocidades residuales de empuje
+                    root.Velocity = Vector3.zero
+                    root.RotVelocity = Vector3.zero
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    
+                    -- Reparar partes por si el juego las desactivó
+                    for _, obj in ipairs(char:GetDescendants()) do
+                        if obj:IsA("Motor6D") then obj.Enabled = true end
+                        if obj:IsA("Constraint") then obj.Enabled = true end
+                    end
+                    
+                    -- Devolver la cámara y controles
+                    workspace.CurrentCamera.CameraSubject = hum
+                    local PM = LocalPlayer.PlayerScripts:FindFirstChild("PlayerModule")
+                    if PM then
+                        local CM = require(PM:FindFirstChild("ControlModule"))
+                        if CM then CM:Enable() end
+                    end
+                    
+                    hum.AutoRotate = true
+                    hum.PlatformStand = false
+                    hum.Sit = false
+                end)
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 3. LÓGICA DEL AUTO STEAL
 -- ==========================================
 local function getPromptCallbacks(prompt, cacheTable)
     local data = cacheTable[prompt]; if data then return data end
@@ -277,7 +332,7 @@ local function executeV1(prompt)
 end
 
 -- ==========================================
--- 3. LÓGICA DEL AIMBOT (GLAZIER)
+-- 4. LÓGICA DEL AIMBOT (GLAZIER)
 -- ==========================================
 local function getBat()
     local char = LocalPlayer.Character
@@ -427,7 +482,7 @@ local function startZurichAimbot(char)
 end
 
 -- ==========================================
--- 4. INTERFAZ (BARRA, FPS, PING Y AIMBOT)
+-- 5. INTERFAZ (BARRA, FPS, PING Y AIMBOT)
 -- ==========================================
 local function createUI()
     local ScreenGui = Instance.new("ScreenGui")
@@ -564,6 +619,9 @@ end
 -- ==========================================
 playIntro()
 repeat task.wait() until game:IsLoaded()
+
+-- INICIAR ANTI RAGDOLL SILENCIOSO
+startAntiRagdoll()
 
 task.spawn(function()
     while task.wait(0.15) do
